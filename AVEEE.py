@@ -5,12 +5,11 @@ from datetime import datetime
 # Set page config
 st.set_page_config(
     page_title="Work Hours & Pay Analyzer",
-    page_icon="⏱️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for styling
+# Custom CSS
 st.markdown("""
 <style>
     .header-style {
@@ -19,41 +18,40 @@ st.markdown("""
         color: #2a4365;
         margin-bottom: 10px;
     }
-    .date-range-box {
-        background-color: #2a4365;
-        color: white;
+    .box {
+        background-color: #f0f2f6;
         padding: 15px;
         border-radius: 10px;
-        margin-bottom: 20px;
+        margin-bottom: 15px;
     }
-    .metric-box {
-        background-color: #f8f9fa;
-        border-radius: 10px;
-        padding: 15px;
-        margin-bottom: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    .highlight {
-        font-size: 1.4em;
+    .metric {
+        font-size: 1.3em;
         font-weight: bold;
         color: #2a4365;
     }
-    .subheader {
-        font-size: 1.1em;
-        color: #4a5568;
-        margin-bottom: 5px;
+    .subtext {
+        font-size: 1em;
+        color: #555;
     }
 </style>
 """, unsafe_allow_html=True)
 
 @st.cache_data
 def load_data():
-    df = pd.read_csv('AVEEE.csv')
-    df['date'] = pd.to_datetime(df['date'])
+    try:
+        df = pd.read_csv('AVEEE.csv')
+    except:
+        df = pd.DataFrame(columns=['date', 'hours', 'payforaverage'])
+
+    df['date'] = pd.to_datetime(df['date'], errors='coerce')
     df['hours'] = pd.to_numeric(df['hours'], errors='coerce').fillna(0)
     df['payforaverage'] = pd.to_numeric(df['payforaverage'], errors='coerce').fillna(0)
     return df
 
+def save_data(df):
+    df.to_csv('AVEEE.csv', index=False, encoding='utf-8-sig')
+
+# Month mapping
 month_ranges = {
     1: ('2025-01-11', '2024-12-09'),
     2: ('2025-02-11', '2025-01-09'),
@@ -78,12 +76,15 @@ month_names = {
 }
 
 def main():
-    st.title("⏱️ Work Hours & Pay Analyzer")
-    st.markdown("Analyze your working hours and compensation across different time periods")
-    
-    df = load_data()
-    
-    # Sidebar for inputs
+    st.title("Work Hours & Pay Analyzer")
+
+    # Load data into session state
+    if 'df' not in st.session_state:
+        st.session_state.df = load_data()
+        st.session_state.edited_data = None
+
+    df = st.session_state.df
+
     with st.sidebar:
         st.header("Settings")
         selected_month = st.selectbox(
@@ -91,85 +92,80 @@ def main():
             options=list(month_names.keys()),
             format_func=lambda x: month_names[x]
         )
-        
-        show_details = st.checkbox("Show daily details", value=False)
-        
-        if st.button("Calculate Metrics", type="primary", use_container_width=True):
-            st.session_state.calculate = True
+        calculate_clicked = st.button("Calculate")
+        save_clicked = st.button("Save")
+
+    start_date, end_date = month_ranges[selected_month]
+    start_date = pd.to_datetime(start_date)
+    end_date = pd.to_datetime(end_date)
+
+    # Filter for selected range
+    filtered = df[(df['date'] >= start_date) & (df['date'] <= end_date)].copy()
+
+    # Editable table
+    st.subheader("Work Data (Editable)")
+    filtered_display = filtered.copy()
+    filtered_display['date'] = filtered_display['date'].dt.strftime('%Y-%m-%d')
+
+    edited_df = st.data_editor(
+        filtered_display,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "date": "Date",
+            "hours": st.column_config.NumberColumn("Hours", format="%.2f"),
+            "payforaverage": st.column_config.NumberColumn("Pay", format="%.2f")
+        },
+        key=f"edit_{selected_month}"
+    )
+
+    # Store edited data in session state without saving yet
+    if edited_df is not None:
+        st.session_state.edited_data = edited_df.copy()
+        st.session_state.edited_data['date'] = pd.to_datetime(st.session_state.edited_data['date'])
+
+    if save_clicked:
+        if st.session_state.edited_data is not None:
+            # Remove old data for this period
+            df = df[~((df['date'] >= start_date) & (df['date'] <= end_date))]
+            # Add edited data
+            df = pd.concat([df, st.session_state.edited_data], ignore_index=True)
+            st.session_state.df = df
+            save_data(df)
+            st.success("Data saved successfully.")
         else:
-            st.session_state.calculate = False
-    
-    # Main content area
-    if 'calculate' in st.session_state and st.session_state.calculate:
-        start_date, end_date = month_ranges[selected_month]
-        start_date = pd.to_datetime(start_date)
-        end_date = pd.to_datetime(end_date)
-        
-        filtered = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
-        
-        if not filtered.empty:
-            total_hours = filtered['hours'].sum()
-            total_pay = filtered['payforaverage'].sum()
-            work_days = len(filtered[filtered['hours'] > 0])
-            avg_hours = total_hours / work_days if work_days > 0 else 0
-            avg_pay = total_pay / work_days if work_days > 0 else 0
-            pay_per_hour = total_pay / total_hours if total_hours > 0 else 0
-            
-            # Date range box
-            st.markdown(f"""
-            <div class="date-range-box">
-                <h2 style='color: white; margin: 0;'>📅 {month_names[selected_month]}</h2>
-                <p style='color: white; margin: 0; font-size: 1.1em;'>{start_date.date()} to {end_date.date()}</p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Main metrics
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.markdown("<div class='metric-box'>"
-                           f"<div class='subheader'>⏳ Total Hours</div>"
-                           f"<div class='highlight'>{total_hours:.2f}</div>"
-                           "</div>", unsafe_allow_html=True)
-                
-                st.markdown("<div class='metric-box'>"
-                           f"<div class='subheader'>📊 Working Days</div>"
-                           f"<div class='highlight'>{work_days}</div>"
-                           "</div>", unsafe_allow_html=True)
-            
-            with col2:
-                st.markdown("<div class='metric-box'>"
-                           f"<div class='subheader'>Total Pay</div>"
-                           f"<div class='highlight'>{total_pay:,.2f}</div>"
-                           "</div>", unsafe_allow_html=True)
-                
-                st.markdown("<div class='metric-box'>"
-                           f"<div class='subheader'>📅 Avg Hours/Day</div>"
-                           f"<div class='highlight'>{avg_hours:.2f}</div>"
-                           "</div>", unsafe_allow_html=True)
-            
-            with col3:
-                st.markdown("<div class='metric-box'>"
-                           f"<div class='subheader'>Avg Pay/Day</div>"
-                           f"<div class='highlight'>{avg_pay:,.2f}</div>"
-                           "</div>", unsafe_allow_html=True)
-                
-                st.markdown("<div class='metric-box'>"
-                           f"<div class='subheader'>Pay Rate/Hour</div>"
-                           f"<div class='highlight'>{pay_per_hour:,.2f}</div>"
-                           "</div>", unsafe_allow_html=True)
-            
-            # Daily details
-            if show_details:
-                st.subheader("Daily Breakdown")
-                st.dataframe(
-                    filtered[['date', 'hours', 'payforaverage']].style.format({
-                        'hours': '{:.2f}',
-                        'payforaverage': '{:,.2f}'
-                    }).background_gradient(cmap='Blues'),
-                    use_container_width=True
-                )
+            st.warning("No changes to save.")
+
+    if calculate_clicked:
+        if st.session_state.edited_data is not None:
+            filtered = st.session_state.edited_data.copy()
         else:
-            st.warning("No data found for the selected period.")
+            filtered = df[(df['date'] >= start_date) & (df['date'] <= end_date)].copy()
+
+        total_hours = filtered['hours'].sum()
+        total_pay = filtered['payforaverage'].sum()
+        work_days = len(filtered[filtered['hours'] > 0])
+        avg_hours = total_hours / work_days if work_days > 0 else 0
+        avg_pay = total_pay / work_days if work_days > 0 else 0
+        pay_per_hour = total_pay / total_hours if total_hours > 0 else 0
+
+        st.markdown(f"""
+        <div class='box'>
+            <h3>{month_names[selected_month]}</h3>
+            <p class='subtext'>{start_date.date()} to {end_date.date()}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown(f"<div class='box'><div class='subtext'>Total Hours</div><div class='metric'>{total_hours:.2f}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='box'><div class='subtext'>Working Days</div><div class='metric'>{work_days}</div></div>", unsafe_allow_html=True)
+        with col2:
+            st.markdown(f"<div class='box'><div class='subtext'>Total Pay</div><div class='metric'>{total_pay:.2f}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='box'><div class='subtext'>Avg Hours/Day</div><div class='metric'>{avg_hours:.2f}</div></div>", unsafe_allow_html=True)
+        with col3:
+            st.markdown(f"<div class='box'><div class='subtext'>Avg Pay/Day</div><div class='metric'>{avg_pay:.2f}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='box'><div class='subtext'>Pay Rate per Hour</div><div class='metric'>{pay_per_hour:.2f}</div></div>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
