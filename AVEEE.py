@@ -1,6 +1,7 @@
 import pandas as pd
 import streamlit as st
 from datetime import datetime
+pip install matplotlib
 
 # Set page config
 st.set_page_config(
