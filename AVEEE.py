@@ -9,7 +9,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS with June color modification
 st.markdown("""
 <style>
     .header-style {
@@ -19,7 +19,7 @@ st.markdown("""
         margin-bottom: 10px;
     }
     .box {
-        background-color: #f0f2f6;
+        background-color: orange ;
         padding: 15px;
         border-radius: 10px;
         margin-bottom: 15px;
@@ -67,6 +67,16 @@ month_ranges = {
     12: ('2025-08-11', '2025-11-09')
 }
 
+premium_ranges = {
+    6: ('2025-04-25', '2025-05-24'),
+    7: ('2025-05-25', '2025-06-24'),
+    8: ('2025-06-25', '2025-07-24'),
+    9: ('2025-07-25', '2025-08-24'),
+    10: ('2025-08-25', '2025-09-24'),
+    11: ('2025-09-25', '2025-10-24'),
+    12: ('2025-10-25', '2025-11-24')
+}
+
 month_names = {
     1: "January", 2: "February", 3: "March", 4: "April",
     5: "May (Jan 11 - Apr 9)", 6: "June (Feb 11 - May 9)",
@@ -78,7 +88,6 @@ month_names = {
 def main():
     st.title("Work Hours & Pay Analyzer")
 
-    # Load data into session state
     if 'df' not in st.session_state:
         st.session_state.df = load_data()
         st.session_state.edited_data = None
@@ -92,6 +101,7 @@ def main():
             options=list(month_names.keys()),
             format_func=lambda x: month_names[x]
         )
+        base_hourly_rate = st.number_input("Base Hourly Rate ($)", value=32000)
         calculate_clicked = st.button("Calculate")
         save_clicked = st.button("Save")
 
@@ -99,10 +109,8 @@ def main():
     start_date = pd.to_datetime(start_date)
     end_date = pd.to_datetime(end_date)
 
-    # Filter for selected range
     filtered = df[(df['date'] >= start_date) & (df['date'] <= end_date)].copy()
 
-    # Editable table
     st.subheader("Work Data (Editable)")
     filtered_display = filtered.copy()
     filtered_display['date'] = filtered_display['date'].dt.strftime('%Y-%m-%d')
@@ -119,16 +127,13 @@ def main():
         key=f"edit_{selected_month}"
     )
 
-    # Store edited data in session state without saving yet
     if edited_df is not None:
         st.session_state.edited_data = edited_df.copy()
         st.session_state.edited_data['date'] = pd.to_datetime(st.session_state.edited_data['date'])
 
     if save_clicked:
         if st.session_state.edited_data is not None:
-            # Remove old data for this period
             df = df[~((df['date'] >= start_date) & (df['date'] <= end_date))]
-            # Add edited data
             df = pd.concat([df, st.session_state.edited_data], ignore_index=True)
             st.session_state.df = df
             save_data(df)
@@ -137,10 +142,7 @@ def main():
             st.warning("No changes to save.")
 
     if calculate_clicked:
-        if st.session_state.edited_data is not None:
-            filtered = st.session_state.edited_data.copy()
-        else:
-            filtered = df[(df['date'] >= start_date) & (df['date'] <= end_date)].copy()
+        filtered = st.session_state.edited_data.copy() if st.session_state.edited_data is not None else filtered
 
         total_hours = filtered['hours'].sum()
         total_pay = filtered['payforaverage'].sum()
@@ -149,6 +151,7 @@ def main():
         avg_pay = total_pay / work_days if work_days > 0 else 0
         pay_per_hour = total_pay / total_hours if total_hours > 0 else 0
 
+        # Display average info
         st.markdown(f"""
         <div class='box'>
             <h3>{month_names[selected_month]}</h3>
@@ -166,6 +169,29 @@ def main():
         with col3:
             st.markdown(f"<div class='box'><div class='subtext'>Avg Pay/Day</div><div class='metric'>{avg_pay:.2f}</div></div>", unsafe_allow_html=True)
             st.markdown(f"<div class='box'><div class='subtext'>Pay Rate per Hour</div><div class='metric'>{pay_per_hour:.2f}</div></div>", unsafe_allow_html=True)
+
+        # Premium date range
+        if selected_month in premium_ranges:
+            premium_start, premium_end = premium_ranges[selected_month]
+            premium_start = pd.to_datetime(premium_start)
+            premium_end = pd.to_datetime(premium_end)
+
+            premium_df = df[(df['date'] >= premium_start) & (df['date'] <= premium_end)].copy()
+            premium_df['ot_hours'] = premium_df['hours'].apply(lambda x: max(x - 8, 0))
+            premium_df['ot_premium'] = premium_df['ot_hours'] * pay_per_hour * 1.6
+            premium_df['ns_hours'] = premium_df['hours'].apply(lambda x: 8 if x == 12 else 0)
+            ns_premium_rate = (pay_per_hour * 1.3) - base_hourly_rate
+            premium_df['ns_premium'] = premium_df['ns_hours'] * ns_premium_rate
+
+            total_ot_premium = premium_df['ot_premium'].sum()
+            total_ns_premium = premium_df['ns_premium'].sum()
+
+            st.markdown(f"<div class='box'><div class='subtext'>Premium Period</div><div class='metric'>{premium_start.date()} to {premium_end.date()}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='box'><div class='subtext'>Total OT Premium</div><div class='metric'>{total_ot_premium:.2f}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='box'><div class='subtext'>Total NS Premium</div><div class='metric'>{total_ns_premium:.2f}</div></div>", unsafe_allow_html=True)
+
+            with st.expander("View Premium Breakdown"):
+                st.dataframe(premium_df[['date', 'hours', 'ot_hours', 'ot_premium', 'ns_hours', 'ns_premium']])
 
 if __name__ == "__main__":
     main()
